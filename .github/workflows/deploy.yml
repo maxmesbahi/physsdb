@@ -189,11 +189,32 @@ jobs:
           sshpass -e ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" \
             "$REMOTE_ENV bash ~/$REMOTE_DIR/.github/workflows/scripts/remote-deploy.sh"
 
+      - name: Read back the actual port (in case auto-discovery shifted it)
+        id: actual
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          REMOTE_DIR: ${{ steps.inp.outputs.remote_dir }}
+          REQUESTED_PORT: ${{ steps.inp.outputs.port }}
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                    -o ConnectTimeout=10 -o LogLevel=ERROR -p $VPS_PORT"
+          ACTUAL=$(sshpass -e ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" \
+                   "cat ~/$REMOTE_DIR/.actual-port 2>/dev/null || echo $REQUESTED_PORT")
+          ACTUAL=$(echo "$ACTUAL" | tr -dc '0-9')
+          [ -z "$ACTUAL" ] && ACTUAL="$REQUESTED_PORT"
+          echo "port=$ACTUAL" >> $GITHUB_OUTPUT
+          echo "Actual host port the container bound to: $ACTUAL"
+
       - name: Verify external reachability + write summary
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
-          PORT: ${{ steps.inp.outputs.port }}
+          REQUESTED_PORT: ${{ steps.inp.outputs.port }}
+          PORT: ${{ steps.actual.outputs.port }}
           MODE: ${{ steps.inp.outputs.mode }}
           PROFILE: ${{ steps.inp.outputs.profile }}
           IMAGE: ${{ steps.inp.outputs.ghcr_image }}
@@ -206,7 +227,12 @@ jobs:
             echo "- **Mode**: \`$MODE\`"
             echo "- **Profile**: \`$PROFILE\`"
             echo "- **Remote dir**: \`~/$REMOTE_DIR\`"
-            echo "- **Port**: \`$PORT\`"
+            if [ "$REQUESTED_PORT" != "$PORT" ]; then
+              echo "- **Requested port**: \`$REQUESTED_PORT\` (was occupied)"
+              echo "- **Actual port**: \`$PORT\` (auto-selected)"
+            else
+              echo "- **Port**: \`$PORT\`"
+            fi
             if [ "$MODE" = "ghcr" ]; then
               echo "- **Image**: \`$IMAGE:$TAG\`"
             fi
@@ -214,13 +240,13 @@ jobs:
           } >> $GITHUB_STEP_SUMMARY
           if curl -fsS --max-time 15 "http://$VPS_HOST:$PORT/" >/dev/null; then
             {
-              echo "### ✅ Dashboard reachable"
+              echo "### ✅ Dashboard reachable from the public internet"
               echo ""
               echo "Open in your browser:  **http://$VPS_HOST:$PORT/**"
             } >> $GITHUB_STEP_SUMMARY
           else
             {
-              echo "### ⚠️ Container is up, but port \`$PORT\` is **not** reachable from the public internet"
+              echo "### ⚠️ Container is healthy, but \`$VPS_HOST:$PORT\` is **not** reachable from the public internet"
               echo ""
               echo "Likely causes:"
               echo "- VPS is behind NAT (only port 22 is forwarded to the VM)"

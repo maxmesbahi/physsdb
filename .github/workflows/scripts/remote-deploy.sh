@@ -87,11 +87,8 @@ elif [ "$PROFILE" = "gpu" ] && ! HAVE nvidia-smi; then
   echo "or install a CUDA driver first."
 fi
 
-# ---------- 3. firewall (UFW only) ------------------------------------------
-if HAVE ufw && S ufw status 2>/dev/null | grep -q "Status: active"; then
-  log "Opening UFW port $PORT/tcp"
-  S ufw allow "$PORT/tcp" || true
-fi
+# ---------- 3. (UFW opened later, once we know the actual port) -------------
+# moved below — see "port auto-discovery"
 
 # ---------- 4. choose compose file & maybe login to GHCR --------------------
 case "$MODE" in
@@ -116,13 +113,39 @@ esac
 log "Using compose file: $COMPOSE_FILE"
 
 # ---------- 5. (re)deploy ---------------------------------------------------
-log "Stopping any previous instance"
+log "Stopping any previous instance of THIS compose project"
 S env GHCR_IMAGE="${GHCR_IMAGE:-}" GHCR_TAG="${GHCR_TAG:-}" \
   docker compose -f "$COMPOSE_FILE" --profile "$PROFILE" down --remove-orphans 2>/dev/null || true
 
-# Free the port if something else is on it
-if S ss -lntp 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
-  echo "::warning::port $PORT is occupied by another process; container may fail to bind."
+# ---- port auto-discovery ----
+# If the requested host port is already bound (by another tenant, another
+# container, the user's own previous deployment, etc.), scan upward for a
+# free one in the same range.
+port_in_use() {
+  S ss -lntp 2>/dev/null | awk '{print $4}' | grep -qE "(^|[.:])$1\$"
+}
+REQUESTED_PORT="$PORT"
+if port_in_use "$PORT"; then
+  log "Requested port $PORT is occupied; scanning for next free port"
+  found=""
+  for p in $(seq "$PORT" $((PORT + 50))); do
+    if ! port_in_use "$p"; then
+      found="$p"; break
+    fi
+  done
+  if [ -z "$found" ]; then
+    echo "::error::no free port found in range $PORT-$((PORT + 50))"
+    exit 1
+  fi
+  PORT="$found"
+  echo "::notice::requested port $REQUESTED_PORT was busy → publishing on $PORT instead"
+fi
+# Record the actual port so the workflow can echo it back into the summary
+echo "$PORT" > "$HOME/$REMOTE_DIR/.actual-port"
+log "Publishing on host port $PORT (container internal port is always 7860)"
+# Open the actual port in UFW if active
+if HAVE ufw && S ufw status 2>/dev/null | grep -q "Status: active"; then
+  S ufw allow "$PORT/tcp" >/dev/null 2>&1 || true
 fi
 
 if [ "$MODE" = "ghcr" ]; then
