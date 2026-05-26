@@ -61,7 +61,7 @@ COPY data/ /app/data/
 
 # --- Runtime config -----------------------------------------------------------
 ENV SDB_MODEL_ROOT=/app/runs \
-    SDB_DATA_ROOT=/app/data \
+    SDB_DATA_ROOT=/app/data/sample \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860 \
     GRADIO_ANALYTICS_ENABLED=False

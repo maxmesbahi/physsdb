@@ -25,7 +25,7 @@ services:
       - "${SDB_PORT:-7860}:7860"
     environment:
       - SDB_MODEL_ROOT=/app/runs
-      - SDB_DATA_ROOT=/app/data
+      - SDB_DATA_ROOT=/app/data/sample
       - GRADIO_ANALYTICS_ENABLED=False
     volumes:
       # Override bundled weights/data with host directories (optional)
@@ -53,7 +53,7 @@ services:
       - "${SDB_PORT:-7860}:7860"
     environment:
       - SDB_MODEL_ROOT=/app/runs
-      - SDB_DATA_ROOT=/app/data
+      - SDB_DATA_ROOT=/app/data/sample
       - GRADIO_ANALYTICS_ENABLED=False
     volumes:
       - ./runs:/app/runs:ro
