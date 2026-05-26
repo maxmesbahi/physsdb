@@ -27,11 +27,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Deploy mode"
+        description: "Deploy mode (ghcr=pull image, build=build on VPS, conda=no Docker)"
         required: true
         default: "ghcr"
         type: choice
-        options: [ghcr, build]
+        options: [ghcr, build, conda]
       profile:
         description: "Container profile"
         required: true
@@ -68,11 +68,12 @@ jobs:
     environment: production
 
     steps:
-      - name: Checkout (no LFS needed in ghcr mode)
+      - name: Checkout (LFS only when shipping source tree)
         uses: actions/checkout@v4
         with:
-          # Only fetch LFS when we're going to ship the source tree
-          lfs: ${{ inputs.mode == 'build' }}
+          # ghcr mode: image already has weights baked in → no LFS needed
+          # build / conda modes: VPS needs the weights from the source tree
+          lfs: ${{ inputs.mode != 'ghcr' }}
 
       - name: Install sshpass + rsync on the runner
         run: |
@@ -143,9 +144,9 @@ jobs:
             -e "ssh $SSH_OPTS" \
             "$VPS_USER@$VPS_HOST:~/$REMOTE_DIR/.github/workflows/scripts/"
 
-      # ---------- BUILD mode: ship the whole repo via rsync -------------------
-      - name: Sync repo (build mode)
-        if: steps.inp.outputs.mode == 'build'
+      # ---------- BUILD or CONDA mode: ship the whole repo via rsync ---------
+      - name: Sync repo (build / conda mode)
+        if: steps.inp.outputs.mode == 'build' || steps.inp.outputs.mode == 'conda'
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -235,6 +236,9 @@ jobs:
             fi
             if [ "$MODE" = "ghcr" ]; then
               echo "- **Image**: \`$IMAGE:$TAG\`"
+            elif [ "$MODE" = "conda" ]; then
+              echo "- **Runtime**: miniforge3 + conda-forge env, managed by \`systemctl --user sdb-app\`"
+              echo "- **Log file**: \`~/$REMOTE_DIR/app.log\` on the VPS"
             fi
             echo ""
           } >> $GITHUB_STEP_SUMMARY

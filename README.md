@@ -324,7 +324,15 @@ Two workflows ship together:
 | Workflow                                                                | What it does                                                                                          |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | [`.github/workflows/publish-image.yml`](.github/workflows/publish-image.yml) | Builds `physsdb:gpu` and `physsdb:cpu` images on GitHub-hosted runners and pushes them to **GitHub Container Registry** (ghcr.io/&lt;owner&gt;/&lt;repo&gt;). Triggered on every push to `main` and on every Release tag. |
-| [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)             | SSHs into a VPS and either **pulls the latest image from GHCR** (default, ~2–5 min) **or** rsync-and-builds from source on the VPS (~10–15 min, for offline/restricted hosts). Triggered manually or after a fresh publish. |
+| [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)             | SSHs into a VPS and runs **one of three deploy modes** (see below). Triggered manually or after a fresh publish.                                          |
+
+### The three deploy modes
+
+| `mode` | What it does | First-deploy time | When to use it |
+| --- | --- | --- | --- |
+| `ghcr` *(default)* | `docker pull` from `ghcr.io/<owner>/<repo>:<gpu\|cpu>`; `docker compose up -d`. Image already has weights baked in. | ~3–5 min | Any VPS that can reach **ghcr.io** (most US/EU clouds). Fastest. |
+| `build` | rsync the source tree → `docker compose --build` on the VPS, pulling the PyTorch base from **Docker Hub**. | ~10–15 min | VPSs where **ghcr.io is blocked** but Docker Hub works. |
+| `conda` | No Docker at all. Installs miniforge in `~/$REMOTE_DIR/miniforge3`, creates a conda-forge env, runs the app as a `systemd --user` service. | ~10–15 min | VPSs where **both** ghcr.io **and** Docker Hub are blocked / filtered (e.g. some Iranian or restricted-region VPSs). Works on **any** host with internet to GitHub Releases + conda-forge — also works on normal VPSs as a Docker-free option. |
 
 Pipeline:
 
