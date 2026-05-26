@@ -2,12 +2,19 @@
 #  Sentinel-2 SDB Research Dashboard — PhysSDB
 #
 #  One Dockerfile, two flavours:
-#    docker build -t physsdb:gpu .                              # default (CUDA 12.x)
-#    docker build --build-arg BASE_IMAGE=pytorch/pytorch:2.4.0-cpu \
-#                 -t physsdb:cpu .                              # CPU-only
+#    # GPU (CUDA 12.4 + cudnn9, ~5 GB) — default
+#    docker build -t physsdb:gpu .
 #
-#  The image is intentionally single-stage on top of the official PyTorch
-#  runtime image so we inherit a known-good torch/cuda/cudnn build.
+#    # CPU-only (python:3.11-slim + pip torch CPU wheels, ~2 GB)
+#    docker build \
+#      --build-arg BASE_IMAGE=python:3.11-slim \
+#      --build-arg INSTALL_TORCH=true \
+#      -t physsdb:cpu .
+#
+#  Why two bases: pytorch/pytorch no longer publishes a `-cpu` tag, so for the
+#  CPU build we start from a tiny Python image and pip-install the CPU torch
+#  wheels.  GPU build uses PyTorch's official CUDA runtime so torch is already
+#  present.
 # =============================================================================
 
 ARG BASE_IMAGE=pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
@@ -37,6 +44,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# --- (CPU base only) install torch CPU wheels --------------------------------
+# Re-declare ARG inside the build stage so RUN can read it.
+ARG INSTALL_TORCH=false
+RUN if [ "$INSTALL_TORCH" = "true" ]; then \
+      pip install --index-url https://download.pytorch.org/whl/cpu \
+                  torch==2.4.0 torchvision==0.19.0; \
+    fi
 
 # --- Python deps (own layer for cache hits) -----------------------------------
 COPY requirements.txt /app/requirements.txt

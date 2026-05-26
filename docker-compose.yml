@@ -46,7 +46,8 @@ services:
     build:
       context: .
       args:
-        BASE_IMAGE: pytorch/pytorch:2.4.0-cpu
+        BASE_IMAGE: python:3.11-slim
+        INSTALL_TORCH: "true"
     image: physsdb:cpu
     container_name: physsdb-cpu
     ports:

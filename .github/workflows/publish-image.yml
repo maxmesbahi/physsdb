@@ -52,8 +52,10 @@ jobs:
         include:
           - flavour: gpu
             base_image: pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+            install_torch: "false"
           - flavour: cpu
-            base_image: pytorch/pytorch:2.4.0-cpu
+            base_image: python:3.11-slim
+            install_torch: "true"
 
     steps:
       - name: Checkout (with LFS — needed so weights bake into the image)
@@ -110,6 +112,7 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             BASE_IMAGE=${{ matrix.base_image }}
+            INSTALL_TORCH=${{ matrix.install_torch }}
           # GHCR-backed layer cache: pulls/pushes a `:buildcache-<flavour>` tag.
           cache-from: type=registry,ref=${{ steps.img.outputs.image }}:buildcache-${{ matrix.flavour }}
           cache-to:   type=registry,ref=${{ steps.img.outputs.image }}:buildcache-${{ matrix.flavour }},mode=max
