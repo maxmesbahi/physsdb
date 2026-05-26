@@ -1,0 +1,61 @@
+# PhysSDB — Compose configuration
+#
+# Two profiles:
+#   docker compose --profile cpu up -d        # CPU-only build, runs anywhere
+#   docker compose --profile gpu up -d        # GPU build, needs nvidia-container-toolkit
+#
+# To rebuild the image when you change code:
+#   docker compose --profile <cpu|gpu> build
+#
+# To follow logs:    docker compose logs -f
+# To stop:           docker compose down
+
+services:
+
+  # ---------------------------------------------------------------- GPU (default)
+  sdb-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      args:
+        BASE_IMAGE: pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+    image: physsdb:gpu
+    container_name: physsdb-gpu
+    ports:
+      - "${SDB_PORT:-7860}:7860"
+    environment:
+      - SDB_MODEL_ROOT=/app/runs
+      - SDB_DATA_ROOT=/app/data
+      - GRADIO_ANALYTICS_ENABLED=False
+    volumes:
+      # Override bundled weights/data with host directories (optional)
+      - ./runs:/app/runs:ro
+      - ./data:/app/data:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ---------------------------------------------------------------- CPU
+  sdb-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      args:
+        BASE_IMAGE: pytorch/pytorch:2.4.0-cpu
+    image: physsdb:cpu
+    container_name: physsdb-cpu
+    ports:
+      - "${SDB_PORT:-7860}:7860"
+    environment:
+      - SDB_MODEL_ROOT=/app/runs
+      - SDB_DATA_ROOT=/app/data
+      - GRADIO_ANALYTICS_ENABLED=False
+    volumes:
+      - ./runs:/app/runs:ro
+      - ./data:/app/data:ro
+    restart: unless-stopped

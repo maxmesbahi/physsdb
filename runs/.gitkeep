@@ -1,0 +1,12 @@
+Place pre-trained PhysSDB checkpoints here. Layout expected by app.py:
+
+  runs/
+    baseline_an/model_best.pt
+    baseline_pl/model_best.pt
+    physsdb_an/model_best.pt
+    physsdb_pl/model_best.pt
+
+Download options (in order of convenience):
+  1. ./bin/download-weights.sh                    (pulls from GitHub Release)
+  2. git lfs pull                                 (if you cloned with LFS)
+  3. Train them yourself with the scripts in this repo (train_sdb.py / train_phys.py)

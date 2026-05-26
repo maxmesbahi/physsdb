@@ -1,0 +1,48 @@
+# =============================================================================
+#  PhysSDB — Compose configuration for pull-from-GHCR deployments
+#
+#  This file is used by the GitHub Actions deploy workflow on the target VPS.
+#  It pulls a pre-built image from GitHub Container Registry instead of
+#  building locally.  Set GHCR_IMAGE to your repo's image base:
+#
+#     GHCR_IMAGE=ghcr.io/<owner>/<repo>  \
+#     docker compose -f docker-compose.ghcr.yml --profile gpu pull
+#     docker compose -f docker-compose.ghcr.yml --profile gpu up -d
+#
+#  The :gpu and :cpu tags are produced by .github/workflows/publish-image.yml.
+# =============================================================================
+
+services:
+
+  sdb-gpu:
+    profiles: ["gpu"]
+    image: "${GHCR_IMAGE:?GHCR_IMAGE must be set to ghcr.io/<owner>/<repo>}:${GHCR_TAG:-gpu}"
+    container_name: physsdb-gpu
+    ports:
+      - "${SDB_PORT:-7860}:7860"
+    environment:
+      - SDB_MODEL_ROOT=/app/runs
+      - SDB_DATA_ROOT=/app/data
+      - GRADIO_ANALYTICS_ENABLED=False
+    restart: unless-stopped
+    pull_policy: always           # always re-pull on `up` so deploys are atomic
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  sdb-cpu:
+    profiles: ["cpu"]
+    image: "${GHCR_IMAGE:?GHCR_IMAGE must be set to ghcr.io/<owner>/<repo>}:${GHCR_TAG:-cpu}"
+    container_name: physsdb-cpu
+    ports:
+      - "${SDB_PORT:-7860}:7860"
+    environment:
+      - SDB_MODEL_ROOT=/app/runs
+      - SDB_DATA_ROOT=/app/data
+      - GRADIO_ANALYTICS_ENABLED=False
+    restart: unless-stopped
+    pull_policy: always

@@ -1,0 +1,236 @@
+# =============================================================================
+#  PhysSDB — automated deployment to a remote VPS  (GHCR-pull mode by default)
+#
+#  Requires three GitHub Actions secrets (Settings → Secrets → Actions):
+#     VPS_HOST       public IP or DNS of the target VPS
+#     VPS_USER       Linux login name (root or a sudo-capable user)
+#     VPS_PASSWORD   password for that user
+#  Optional secrets:
+#     VPS_PORT       SSH port (default 22)
+#     GHCR_USER      only if the image is private — username for ghcr.io login
+#     GHCR_TOKEN     only if the image is private — PAT with read:packages scope
+#
+#  Triggers:
+#     - workflow_dispatch        (Actions tab → "Run workflow")
+#     - workflow_run → "Build & Publish to GHCR" completed successfully on main
+#                                (auto-deploys after a fresh image is published)
+#
+#  Two modes (input):
+#     ghcr   (default) Pulls the pre-built image from ghcr.io. Fast.
+#     build            rsync's the source tree to the VPS and builds locally.
+#                      Useful for VPSs that can't reach ghcr.io.
+# =============================================================================
+
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Deploy mode"
+        required: true
+        default: "ghcr"
+        type: choice
+        options: [ghcr, build]
+      profile:
+        description: "Container profile"
+        required: true
+        default: "gpu"
+        type: choice
+        options: [gpu, cpu]
+      port:
+        description: "Host port to publish"
+        required: false
+        default: "7860"
+      remote_dir:
+        description: "Install directory on the VPS (relative to $HOME)"
+        required: false
+        default: "physsdb"
+      ghcr_tag:
+        description: "Override GHCR tag (default = profile, e.g. gpu / cpu / gpu-vX.Y.Z)"
+        required: false
+        default: ""
+  workflow_run:
+    workflows: ["Build & Publish to GHCR"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # On a workflow_run trigger, only proceed if the publish workflow succeeded
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout (no LFS needed in ghcr mode)
+        uses: actions/checkout@v4
+        with:
+          # Only fetch LFS when we're going to ship the source tree
+          lfs: ${{ inputs.mode == 'build' }}
+
+      - name: Install sshpass + rsync on the runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass rsync
+
+      - name: Sanity-check required secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          miss=0
+          [ -n "$VPS_HOST"     ] || { echo "::error::VPS_HOST secret not set";     miss=1; }
+          [ -n "$VPS_USER"     ] || { echo "::error::VPS_USER secret not set";     miss=1; }
+          [ -n "$VPS_PASSWORD" ] || { echo "::error::VPS_PASSWORD secret not set"; miss=1; }
+          [ "$miss" = "0" ] || exit 1
+          echo "All required secrets present."
+
+      - name: Determine effective inputs
+        id: inp
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME=$(basename "${{ github.repository }}")
+          echo "mode=${{ inputs.mode             || 'ghcr'     }}"   >> $GITHUB_OUTPUT
+          echo "profile=${{ inputs.profile       || 'gpu'      }}"   >> $GITHUB_OUTPUT
+          echo "port=${{ inputs.port             || '7860'     }}"   >> $GITHUB_OUTPUT
+          echo "remote_dir=${{ inputs.remote_dir || 'physsdb'  }}"   >> $GITHUB_OUTPUT
+          echo "ghcr_image=ghcr.io/$OWNER_LC/$REPO_NAME"             >> $GITHUB_OUTPUT
+          GHCR_TAG="${{ inputs.ghcr_tag }}"
+          if [ -z "$GHCR_TAG" ]; then GHCR_TAG="${{ inputs.profile || 'gpu' }}"; fi
+          echo "ghcr_tag=$GHCR_TAG"                                  >> $GITHUB_OUTPUT
+
+      - name: Probe SSH connectivity
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                    -o ConnectTimeout=10 -o LogLevel=ERROR -p $VPS_PORT"
+          sshpass -e ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" \
+            'echo "SSH OK as $(whoami) on $(hostname); uptime: $(uptime -p)"'
+
+      # ---------- GHCR mode: ship ~4 files, no source tree --------------------
+      - name: Ship deploy assets (ghcr mode)
+        if: steps.inp.outputs.mode == 'ghcr'
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          REMOTE_DIR: ${{ steps.inp.outputs.remote_dir }}
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                    -o ConnectTimeout=15 -o LogLevel=ERROR -p $VPS_PORT"
+          sshpass -e ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "mkdir -p ~/$REMOTE_DIR/.github/workflows/scripts"
+          # Only the two files needed in GHCR mode
+          sshpass -e rsync -az \
+            docker-compose.ghcr.yml \
+            -e "ssh $SSH_OPTS" \
+            "$VPS_USER@$VPS_HOST:~/$REMOTE_DIR/"
+          sshpass -e rsync -az \
+            .github/workflows/scripts/remote-deploy.sh \
+            -e "ssh $SSH_OPTS" \
+            "$VPS_USER@$VPS_HOST:~/$REMOTE_DIR/.github/workflows/scripts/"
+
+      # ---------- BUILD mode: ship the whole repo via rsync -------------------
+      - name: Sync repo (build mode)
+        if: steps.inp.outputs.mode == 'build'
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          REMOTE_DIR: ${{ steps.inp.outputs.remote_dir }}
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                    -o ConnectTimeout=15 -o LogLevel=ERROR -p $VPS_PORT"
+          sshpass -e ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "mkdir -p ~/$REMOTE_DIR"
+          sshpass -e rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='__pycache__/' \
+            --exclude='*.log' \
+            --exclude='data/magicbathynet/' \
+            -e "ssh $SSH_OPTS" \
+            ./ "$VPS_USER@$VPS_HOST:~/$REMOTE_DIR/"
+
+      - name: Run remote-deploy.sh on the VPS
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          REMOTE_DIR: ${{ steps.inp.outputs.remote_dir }}
+          PROFILE: ${{ steps.inp.outputs.profile }}
+          PORT: ${{ steps.inp.outputs.port }}
+          MODE: ${{ steps.inp.outputs.mode }}
+          GHCR_IMAGE: ${{ steps.inp.outputs.ghcr_image }}
+          GHCR_TAG: ${{ steps.inp.outputs.ghcr_tag }}
+          GHCR_USER: ${{ secrets.GHCR_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                    -o ServerAliveInterval=30 -o LogLevel=ERROR -p $VPS_PORT"
+          # Pass parameters as env (so they don't appear in process argv on the VPS)
+          REMOTE_ENV="PW='$VPS_PASSWORD' REMOTE_DIR='$REMOTE_DIR' PROFILE='$PROFILE' PORT='$PORT' MODE='$MODE' GHCR_IMAGE='$GHCR_IMAGE' GHCR_TAG='$GHCR_TAG' GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN'"
+          sshpass -e ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" \
+            "$REMOTE_ENV bash ~/$REMOTE_DIR/.github/workflows/scripts/remote-deploy.sh"
+
+      - name: Verify external reachability + write summary
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          PORT: ${{ steps.inp.outputs.port }}
+          MODE: ${{ steps.inp.outputs.mode }}
+          PROFILE: ${{ steps.inp.outputs.profile }}
+          IMAGE: ${{ steps.inp.outputs.ghcr_image }}
+          TAG: ${{ steps.inp.outputs.ghcr_tag }}
+          REMOTE_DIR: ${{ steps.inp.outputs.remote_dir }}
+        run: |
+          {
+            echo "## PhysSDB deployment result"
+            echo ""
+            echo "- **Mode**: \`$MODE\`"
+            echo "- **Profile**: \`$PROFILE\`"
+            echo "- **Remote dir**: \`~/$REMOTE_DIR\`"
+            echo "- **Port**: \`$PORT\`"
+            if [ "$MODE" = "ghcr" ]; then
+              echo "- **Image**: \`$IMAGE:$TAG\`"
+            fi
+            echo ""
+          } >> $GITHUB_STEP_SUMMARY
+          if curl -fsS --max-time 15 "http://$VPS_HOST:$PORT/" >/dev/null; then
+            {
+              echo "### ✅ Dashboard reachable"
+              echo ""
+              echo "Open in your browser:  **http://$VPS_HOST:$PORT/**"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            {
+              echo "### ⚠️ Container is up, but port \`$PORT\` is **not** reachable from the public internet"
+              echo ""
+              echo "Likely causes:"
+              echo "- VPS is behind NAT (only port 22 is forwarded to the VM)"
+              echo "- Cloud-provider firewall is closed on port \`$PORT\`"
+              echo ""
+              echo "Access via SSH tunnel from your laptop:"
+              echo ""
+              echo '```bash'
+              echo "ssh -L $PORT:127.0.0.1:$PORT $VPS_USER@$VPS_HOST"
+              echo "# then open http://127.0.0.1:$PORT/"
+              echo '```'
+            } >> $GITHUB_STEP_SUMMARY
+          fi

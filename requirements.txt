@@ -1,0 +1,19 @@
+# Sentinel-2 SDB dashboard — runtime requirements
+# PyTorch is pulled from the base image (pytorch/pytorch:*-runtime), so we do
+# not pin it here.  Pin only what we directly call.
+
+gradio>=5.0,<7.0
+numpy>=1.24
+scipy>=1.11
+scikit-image>=0.22
+scikit-learn>=1.4
+pandas>=2.1
+matplotlib>=3.8
+pillow>=10.0
+rasterio>=1.3
+pyproj>=3.6
+mgrs>=1.5
+tifffile>=2024.1
+einops>=0.7
+tqdm>=4.66
+pyyaml>=6.0

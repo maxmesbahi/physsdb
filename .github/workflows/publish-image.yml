@@ -1,0 +1,137 @@
+# =============================================================================
+#  PhysSDB — build & publish container images to GitHub Container Registry
+#
+#  Produces two images per build:
+#     ghcr.io/<owner>/<repo>:gpu          (CUDA 12.4 + cudnn9; ~5 GB)
+#     ghcr.io/<owner>/<repo>:gpu-<sha>
+#     ghcr.io/<owner>/<repo>:cpu          (PyTorch CPU only;   ~2 GB)
+#     ghcr.io/<owner>/<repo>:cpu-<sha>
+#
+#  And, for release tags (vX.Y.Z):
+#     ghcr.io/<owner>/<repo>:gpu-vX.Y.Z
+#     ghcr.io/<owner>/<repo>:cpu-vX.Y.Z
+#     ghcr.io/<owner>/<repo>:latest       (= gpu-vX.Y.Z, multi-arch when applicable)
+#
+#  Authentication: uses the built-in GITHUB_TOKEN (no PAT needed).
+#  Image visibility: PUBLIC by default — anyone can `docker pull` without auth.
+#  If you want PRIVATE images, see README → "GHCR — making images private".
+#
+#  Build cache: layers cached in GHCR itself via the registry cache type,
+#  so subsequent code-only changes rebuild in <60 s.
+# =============================================================================
+
+name: Build & Publish to GHCR
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/scripts/remote-deploy.sh"
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write       # required to push to GHCR
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavour: gpu
+            base_image: pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+          - flavour: cpu
+            base_image: pytorch/pytorch:2.4.0-cpu
+
+    steps:
+      - name: Checkout (with LFS — needed so weights bake into the image)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Compute lowercase image name
+        id: img
+        run: |
+          # GHCR requires the owner part to be lowercase
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME=$(basename "${{ github.repository }}")
+          echo "image=ghcr.io/$OWNER_LC/$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "sha_short=${GITHUB_SHA::7}"         >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx (with registry cache)
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compose tag list
+        id: tags
+        run: |
+          IMAGE="${{ steps.img.outputs.image }}"
+          F="${{ matrix.flavour }}"
+          SHA="${{ steps.img.outputs.sha_short }}"
+          TAGS=( "$IMAGE:${F}" "$IMAGE:${F}-${SHA}" )
+          # On a release event, add the semver-tagged image
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VER="${{ github.event.release.tag_name }}"
+            TAGS+=( "$IMAGE:${F}-${VER}" )
+            # Also publish a non-flavoured :latest pointing at the GPU build
+            if [ "$F" = "gpu" ]; then
+              TAGS+=( "$IMAGE:latest" )
+            fi
+          fi
+          # Comma-separated for docker/build-push-action
+          echo "tags=$(IFS=,; echo "${TAGS[*]}")" >> $GITHUB_OUTPUT
+          echo "primary=$IMAGE:${F}"               >> $GITHUB_OUTPUT
+          printf "Tags to publish:\n%s\n" "${TAGS[@]}"
+
+      - name: Build & push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.base_image }}
+          # GHCR-backed layer cache: pulls/pushes a `:buildcache-<flavour>` tag.
+          cache-from: type=registry,ref=${{ steps.img.outputs.image }}:buildcache-${{ matrix.flavour }}
+          cache-to:   type=registry,ref=${{ steps.img.outputs.image }}:buildcache-${{ matrix.flavour }},mode=max
+          provenance: false   # avoid attaching extra OCI manifests we don't need
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Summary
+        run: |
+          {
+            echo "### 📦 Published \`${{ matrix.flavour }}\` image"
+            echo ""
+            echo "- Primary tag: \`${{ steps.tags.outputs.primary }}\`"
+            echo "- All tags:"
+            echo '  ```'
+            echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n'
+            echo '  ```'
+            echo ""
+            echo "Pull it on any host that can reach ghcr.io:"
+            echo '```bash'
+            echo "docker pull ${{ steps.tags.outputs.primary }}"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

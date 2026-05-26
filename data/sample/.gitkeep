@@ -1,0 +1,16 @@
+Two tiny MagicBathyNet Sentinel-2 sample tiles live here, used only by the
+dashboard's "Load sample tile" button. Layout (matches MagicBathyNet):
+
+  data/sample/
+    agia_napa/
+      img/s2/img_411.tif
+      depth/s2/depth_411.tif
+      norm_param_s2_an.txt
+    puck_lagoon/
+      img/s2/img_411.tif
+      depth/s2/depth_411.tif
+      norm_param_s2_pl.txt
+
+These ~50 KB files are MagicBathyNet redistributables under CC-BY-NC-SA.
+For full training, download the complete dataset from:
+  https://zenodo.org/records/16753753

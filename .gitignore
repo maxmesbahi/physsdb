@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.venv/
+venv/
+.env
+
+.idea/
+.vscode/
+
+*.log
+nohup.out
+app.log
+autopilot.log
+phys_autopilot.log
+
+# Local dataset (~6 GB) — never commit
+data/magicbathynet/
+data/*.zip
+
+# Per-run output dirs are recreated on every demo
+/tmp/sdb_dash_*
