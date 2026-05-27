@@ -454,18 +454,36 @@ The deploy workflow auto-detects these and does `docker login ghcr.io` before pu
 
 ### Opening the dashboard in your browser after the deploy
 
+> **Important — about the port.**
+> The deploy script **auto-discovers a free port** starting from the one you requested in the workflow form (default `7860`). If that port is already used by another service on the VPS, it scans upward (`7860 → 7861 → 7862 …`) up to +50 and publishes on the first free one. **You do not need to know the exact port in advance — the workflow tells you, and so does a file on the VPS.**
+>
+> Three ways to find the **actual** port your dashboard is on:
+> 1. **The workflow summary** (most convenient) — the *Deploy to VPS* run page shows the URL with the correct port, e.g. `http://<VPS_HOST>:7862/`. If auto-discovery shifted from your requested port, the summary makes it explicit:
+>    > **Requested port**: `7860` (was occupied)
+>    > **Actual port**: `7862` (auto-selected)
+> 2. **Read the marker file on the VPS** (works even if you lost the summary):
+>    ```bash
+>    ssh <VPS_USER>@<VPS_HOST> 'cat ~/<REMOTE_DIR>/.actual-port'
+>    ```
+> 3. **`ss` / `lsof` on the VPS** — show what's listening:
+>    ```bash
+>    ssh <VPS_USER>@<VPS_HOST> 'ss -lntp 2>/dev/null | grep python'
+>    ```
+>
+> Throughout the rest of this section, **substitute `$PORT` with whatever the workflow summary or `.actual-port` shows** — do **not** assume 7860 or 7861.
+
 When the **Deploy to VPS** workflow finishes, its summary (visible at the bottom of the workflow run page) gives you one of two things:
 
-#### Case A — your VPS has a public IP and port 7860/7861 is reachable
+#### Case A — your VPS has a public IP and `$PORT` is reachable
 
 The summary shows:
 
 > ### ✅ Dashboard reachable
-> Open in your browser:  **http://<VPS_HOST>:<PORT>/**
+> Open in your browser:  **http://&lt;VPS_HOST&gt;:&lt;PORT&gt;/**
 
-→ Just click the link, or paste it into any browser. Anyone on the internet who has that URL can open it.
+→ Just click that link, or paste it into any browser. Anyone on the internet who has that URL can open it.
 
-#### Case B — your VPS is behind NAT or its cloud firewall blocks the port
+#### Case B — your VPS is behind NAT or its cloud firewall blocks `$PORT`
 
 (This is the common case on small VPSs, home servers, or any VPS where only port 22 is forwarded externally.) The summary shows:
 
@@ -477,29 +495,32 @@ The summary shows:
 > # then open http://127.0.0.1:<PORT>/
 > ```
 
-Concrete example (this is what works for the reference VPS):
+**Generic template — replace `$PORT`, `$VPS_USER`, `$VPS_HOST` with what the workflow gave you:**
 
 ```bash
-# 1.  In a terminal on YOUR LAPTOP, open the tunnel:
-ssh -L 7861:127.0.0.1:7861 \
+# 1.  In a terminal on your laptop, open the tunnel:
+ssh -L $PORT:127.0.0.1:$PORT \
     -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-    novarch3@79.127.114.34
+    $VPS_USER@$VPS_HOST
 
 # 2.  Leave that ssh window open.
 
 # 3.  In your browser, open:
-#     http://127.0.0.1:7861/
+#     http://127.0.0.1:$PORT/
 ```
 
-(Pick whatever port the workflow actually published — see the summary. Auto-discovery may have shifted it from 7860 → 7861 → 7862 etc. depending on what's already running on the VPS.)
-
-#### Finding the port later, if you've lost the summary
-
-The deploy script always writes the actual host port to `~/<REMOTE_DIR>/.actual-port` on the VPS:
+**Worked example for the *current* reference VPS** (yours will differ — the port comes from the workflow summary):
 
 ```bash
-ssh <VPS_USER>@<VPS_HOST> 'cat ~/physsdb/.actual-port'
+# Reference VPS: novarch3 user, host 79.127.114.34, port picked = 7861
+# (because novarch2's earlier dashboard already owned 7860 on the same VPS)
+ssh -L 7861:127.0.0.1:7861 \
+    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+    novarch3@79.127.114.34
+# then open  http://127.0.0.1:7861/
 ```
+
+If you deploy to a brand-new VPS where nothing else is on 7860, the same flow uses 7860 instead. The exact value is always whatever `.actual-port` says.
 
 #### Stopping / restarting the dashboard
 
