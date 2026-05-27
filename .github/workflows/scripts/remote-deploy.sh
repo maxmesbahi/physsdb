@@ -140,8 +140,12 @@ if [ "$MODE" = "conda" ]; then
   export XDG_RUNTIME_DIR=/run/user/$(id -u)
 
   # 5. write the systemd --user unit
+  #    Note: GRADIO_TEMP_DIR is forced to a user-private path so that on
+  #    multi-tenant VPSs (e.g. where another user is already running their
+  #    own gradio app) we don't fail with "Permission denied: /tmp/gradio/..."
   log "Writing systemd --user unit ~/.config/systemd/user/sdb-app.service"
   mkdir -p "$HOME/.config/systemd/user"
+  mkdir -p "$APP_DIR/.gradio_tmp"
   cat > "$HOME/.config/systemd/user/sdb-app.service" <<UNIT
 [Unit]
 Description=PhysSDB Sentinel-2 bathymetry dashboard (conda mode)
@@ -159,6 +163,7 @@ Environment=HOME=$HOME
 Environment=SDB_MODEL_ROOT=$APP_DIR/runs
 Environment=SDB_DATA_ROOT=$APP_DIR/data/sample
 Environment=GRADIO_ANALYTICS_ENABLED=False
+Environment=GRADIO_TEMP_DIR=$APP_DIR/.gradio_tmp
 
 [Install]
 WantedBy=default.target

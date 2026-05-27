@@ -27,6 +27,7 @@ services:
       - SDB_MODEL_ROOT=/app/runs
       - SDB_DATA_ROOT=/app/data/sample
       - GRADIO_ANALYTICS_ENABLED=False
+      - GRADIO_TEMP_DIR=/tmp/sdb_dash
     volumes:
       # Override bundled weights/data with host directories (optional)
       - ./runs:/app/runs:ro
@@ -56,6 +57,7 @@ services:
       - SDB_MODEL_ROOT=/app/runs
       - SDB_DATA_ROOT=/app/data/sample
       - GRADIO_ANALYTICS_ENABLED=False
+      - GRADIO_TEMP_DIR=/tmp/sdb_dash
     volumes:
       - ./runs:/app/runs:ro
       - ./data:/app/data:ro

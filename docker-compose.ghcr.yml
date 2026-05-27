@@ -24,6 +24,7 @@ services:
       - SDB_MODEL_ROOT=/app/runs
       - SDB_DATA_ROOT=/app/data/sample
       - GRADIO_ANALYTICS_ENABLED=False
+      - GRADIO_TEMP_DIR=/tmp/sdb_dash
     restart: unless-stopped
     pull_policy: always           # always re-pull on `up` so deploys are atomic
     deploy:
@@ -44,5 +45,6 @@ services:
       - SDB_MODEL_ROOT=/app/runs
       - SDB_DATA_ROOT=/app/data/sample
       - GRADIO_ANALYTICS_ENABLED=False
+      - GRADIO_TEMP_DIR=/tmp/sdb_dash
     restart: unless-stopped
     pull_policy: always
