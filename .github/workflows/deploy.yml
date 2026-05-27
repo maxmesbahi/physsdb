@@ -64,7 +64,10 @@ jobs:
     # On a workflow_run trigger, only proceed if the publish workflow succeeded
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 90 min covers worst-case slow networks (e.g. conda env solve over an
+    # intermittent CDN). Fast deploys still finish in 3-15 min; timeout is a
+    # ceiling not a delay.
+    timeout-minutes: 90
     environment: production
 
     steps:

@@ -452,6 +452,74 @@ If you keep the GitHub package **private** instead of public, the deploy workflo
 
 The deploy workflow auto-detects these and does `docker login ghcr.io` before pulling.
 
+### Opening the dashboard in your browser after the deploy
+
+When the **Deploy to VPS** workflow finishes, its summary (visible at the bottom of the workflow run page) gives you one of two things:
+
+#### Case A — your VPS has a public IP and port 7860/7861 is reachable
+
+The summary shows:
+
+> ### ✅ Dashboard reachable
+> Open in your browser:  **http://<VPS_HOST>:<PORT>/**
+
+→ Just click the link, or paste it into any browser. Anyone on the internet who has that URL can open it.
+
+#### Case B — your VPS is behind NAT or its cloud firewall blocks the port
+
+(This is the common case on small VPSs, home servers, or any VPS where only port 22 is forwarded externally.) The summary shows:
+
+> ### ⚠️ Container is healthy, but `<VPS_HOST>:<PORT>` is not reachable from the public internet
+>
+> Access via SSH tunnel from your laptop:
+> ```bash
+> ssh -L <PORT>:127.0.0.1:<PORT> <VPS_USER>@<VPS_HOST>
+> # then open http://127.0.0.1:<PORT>/
+> ```
+
+Concrete example (this is what works for the reference VPS):
+
+```bash
+# 1.  In a terminal on YOUR LAPTOP, open the tunnel:
+ssh -L 7861:127.0.0.1:7861 \
+    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+    novarch3@79.127.114.34
+
+# 2.  Leave that ssh window open.
+
+# 3.  In your browser, open:
+#     http://127.0.0.1:7861/
+```
+
+(Pick whatever port the workflow actually published — see the summary. Auto-discovery may have shifted it from 7860 → 7861 → 7862 etc. depending on what's already running on the VPS.)
+
+#### Finding the port later, if you've lost the summary
+
+The deploy script always writes the actual host port to `~/<REMOTE_DIR>/.actual-port` on the VPS:
+
+```bash
+ssh <VPS_USER>@<VPS_HOST> 'cat ~/physsdb/.actual-port'
+```
+
+#### Stopping / restarting the dashboard
+
+**Docker modes (`ghcr` / `build`):**
+```bash
+ssh <VPS_USER>@<VPS_HOST>
+cd ~/physsdb
+docker compose --profile gpu down              # stop
+docker compose --profile gpu up -d             # start
+docker compose --profile gpu logs --tail=50   # live log
+```
+
+**Conda mode:**
+```bash
+ssh <VPS_USER>@<VPS_HOST>
+XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user status sdb-app
+XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart sdb-app
+tail -f ~/physsdb/app.log
+```
+
 ### When this won't work as-is
 
 | Situation                                                | What to do |

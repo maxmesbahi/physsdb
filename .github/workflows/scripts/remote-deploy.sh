@@ -90,17 +90,31 @@ if [ "$MODE" = "conda" ]; then
     log "miniforge already present at $MINIFORGE_DIR"
   fi
 
-  # 2. create env if missing
+  # 2. create env if missing — use MAMBA (parallel C++ solver, much better than
+  #    plain conda on slow / intermittent networks: handles partial downloads,
+  #    won't deadlock on one stuck large package the way conda does)
+  MAMBA_BIN="$MINIFORGE_DIR/bin/mamba"
+  PKG_MGR="$MAMBA_BIN"; [ -x "$MAMBA_BIN" ] || PKG_MGR="$CONDA_BIN"
+  log "Package manager: $PKG_MGR"
   if [ ! -x "$ENV_PY" ]; then
-    log "Creating conda env 'sdb' from conda-forge (this takes 5-12 min)"
+    log "Creating env 'sdb' from conda-forge (this takes 5-20 min depending on network)"
     if [ "$PROFILE" = "gpu" ]; then PYTORCH_PKG="pytorch-gpu"; else PYTORCH_PKG="pytorch"; fi
-    "$CONDA_BIN" create -n sdb -c conda-forge -y python=3.11 \
-        "$PYTORCH_PKG" torchvision rasterio numpy scipy scikit-image \
-        scikit-learn pandas matplotlib pillow mgrs pyproj einops \
-        tifffile tqdm pyyaml gradio
+    # Retry the whole create twice in case mamba aborts mid-download; the
+    # second attempt resumes from the package cache.
+    for attempt in 1 2; do
+      log "env create attempt $attempt"
+      if "$PKG_MGR" create -n sdb -c conda-forge -y python=3.11 \
+            "$PYTORCH_PKG" torchvision rasterio numpy scipy scikit-image \
+            scikit-learn pandas matplotlib pillow mgrs pyproj einops \
+            tifffile tqdm pyyaml gradio; then
+        break
+      fi
+      log "attempt $attempt failed; cleaning .partial files and retrying"
+      rm -f "$MINIFORGE_DIR/pkgs"/*.partial 2>/dev/null || true
+    done
   else
-    log "conda env 'sdb' already exists; ensuring deps are present"
-    "$CONDA_BIN" install -n sdb -c conda-forge -y --quiet gradio mgrs pyproj \
+    log "env 'sdb' already exists; ensuring deps are present"
+    "$PKG_MGR" install -n sdb -c conda-forge -y --quiet gradio mgrs pyproj \
         scikit-image rasterio einops >/dev/null 2>&1 || true
   fi
 
